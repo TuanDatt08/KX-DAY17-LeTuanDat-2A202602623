@@ -23,10 +23,30 @@ class ProviderConfig:
     base_url: str | None = None
 
 
-def normalize_provider(value: str) -> str:
-    """Student TODO: map aliases like `anthorpic` -> `anthropic`."""
+SUPPORTED_PROVIDERS = {"openai", "custom", "gemini", "anthropic", "ollama", "openrouter"}
+PROVIDER_ALIASES = {
+    "anthorpic": "anthropic",
+    "claude": "anthropic",
+    "google": "gemini",
+    "google_genai": "gemini",
+    "openai_compatible": "custom",
+}
 
-    raise NotImplementedError
+
+def normalize_provider(value: str) -> str:
+    """Map aliases like `anthorpic` -> `anthropic` and reject unknown providers."""
+
+    provider = (value or "openai").strip().lower()
+    provider = PROVIDER_ALIASES.get(provider, provider)
+    if provider not in SUPPORTED_PROVIDERS:
+        raise ValueError(f"Unsupported provider: {value!r}. Choose one of {sorted(SUPPORTED_PROVIDERS)}")
+    return provider
+
+
+def has_credentials(config: ProviderConfig) -> bool:
+    """Live mode is possible only with an API key (or a local Ollama server)."""
+
+    return normalize_provider(config.provider) == "ollama" or bool(config.api_key)
 
 
 def build_chat_model(config: ProviderConfig):
@@ -39,6 +59,30 @@ def build_chat_model(config: ProviderConfig):
     - `anthropic` -> `ChatAnthropic`
     - `ollama` -> `ChatOllama`
     - `openrouter` -> `ChatOpenRouter`
+
+    Imports are lazy so offline mode works without every provider SDK installed.
     """
 
-    raise NotImplementedError
+    provider = normalize_provider(config.provider)
+    common = {"model": config.model_name, "temperature": config.temperature}
+
+    if provider in ("openai", "custom"):
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(api_key=config.api_key, base_url=config.base_url, **common)
+    if provider == "gemini":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        return ChatGoogleGenerativeAI(google_api_key=config.api_key, **common)
+    if provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+
+        return ChatAnthropic(api_key=config.api_key, **common)
+    if provider == "ollama":
+        from langchain_ollama import ChatOllama
+
+        return ChatOllama(base_url=config.base_url or "http://localhost:11434", **common)
+
+    from langchain_openrouter import ChatOpenRouter
+
+    return ChatOpenRouter(api_key=config.api_key, **common)
